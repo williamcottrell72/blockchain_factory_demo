@@ -40,7 +40,7 @@ Forge does not compile Solidity itself. It orchestrates `solc`, the official com
    - `deployedBytecode`: the *runtime* code the constructor returns, which is what actually lives on-chain.
    - `metadata`, `methodIdentifiers`, and source maps for debugging.
 
-In this project, `web/src/abi.ts` is a hand-copied excerpt of those `abi` fields. The deploy script reads `bytecode` from `out/` to deploy the contracts.
+In this project, the frontend uses those `abi` fields (copied or generated) to talk to the contracts, and `npm run deploy:local` reads `bytecode` from `out/` to deploy the factory.
 
 ### `forge test`: tests are contracts
 
@@ -62,7 +62,7 @@ A Foundry test file is a contract that inherits from `forge-std/Test.sol`. When 
 | `vm.expectRevert(...)` | Marks the next call as expected to revert, and fails the test if it doesn't |
 | `vm.expectEmit(...)` | Compares the next emitted event against an expected one |
 
-Note that `vm.prank` applies to the *next call*, wherever it appears. In `vm.prank(buyer); token.mintFromCurve{value: token.quoteMintCost(3)}(3);`, the nested `quoteMintCost` call runs first and uses up the prank, so the mint runs as the test contract. Compute the cost on its own line before the prank.
+Note that `vm.prank` applies to the *next call*, wherever it appears. In `vm.prank(buyer); token.mint{value: token.quote(3)}(3);`, the nested `quote` call runs first and uses up the prank, so the mint runs as the test contract. Compute the cost on its own line before the prank.
 
 **Fuzz tests.** If a test function takes parameters, for example `testMint(uint256 amount)`, Forge treats it as a property test. It generates random inputs (256 runs by default), mixing in "interesting" values such as 0, `type(uint256).max`, and constants found in your bytecode. When a run fails, Forge **shrinks** the input to a smaller one that still fails and prints it. Use `vm.assume` or `bound` to restrict inputs to valid ranges.
 
@@ -199,11 +199,11 @@ MetaMask remembers each account's nonce per network. After you restart Anvil, th
 
 ## Putting it together: one click in the frontend
 
-When you click **Mint Tokens** on a token card in the React app:
+When you mint tokens from a token's curve in the React app:
 
 1. viem calls `eth_estimateGas` on Anvil, which runs the mint in a throwaway simulation. If it would revert, you see the error before signing.
 2. viem asks MetaMask to sign. MetaMask shows the popup, signs with your key, and sends the transaction to Anvil with `eth_sendRawTransaction`.
-3. Anvil automines a block: revm runs the token's `mintFromCurve` function, checks the ETH sent against the curve's price, updates balances and supply, and records the events in the receipt.
+3. Anvil automines a block: revm runs the token's mint function, checks the ETH sent against the curve's price, updates balances and supply, and records the events in the receipt.
 4. viem polls `eth_getTransactionReceipt`, sees the transaction succeeded, then uses `eth_call` to read the new supply, proceeds, and cost quote, and React re-renders.
 
 You could do every one of those steps by hand with `cast estimate`, `cast send`, `cast receipt`, and `cast call`. Doing so once is a good way to see exactly what the frontend is doing.

@@ -1,6 +1,6 @@
 # Blockchain Factory Demo
 
-A teaching project, rebuilt from scratch with Claude Code by following [docs/PLAYBOOK.md](docs/PLAYBOOK.md).
+A teaching project, rebuilt from scratch with Claude Code by following [docs/PLAYBOOK.md](docs/PLAYBOOK.md). The playbook's prompts describe goals rather than implementations, so each rebuild may differ in names and layout.
 
 The finished project is a Foundry factory that deploys ERC20 tokens with bonding-curve pricing, plus a `viem` + React frontend. It starts with fixed (non-upgradeable) tokens and later adds optional upgradeable tokens built on UUPS proxies.
 

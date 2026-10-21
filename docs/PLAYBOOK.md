@@ -1,30 +1,52 @@
 # Project Playbook
 
-This playbook shows how to rebuild this project step by step, in the order it was actually developed. The project is a Foundry smart-contract repo with a factory that deploys configurable ERC20 tokens, plus a lightweight `viem` + React frontend for local demos.
+This playbook shows how to rebuild this project step by step, in the order it was originally developed. Each phase is a prompt for a coding agent. The prompts describe **goals and constraints**, not implementations, so the agent is free to choose its own contract design, names, and UI layout.
+
+## Project Goals
+
+We are building a small, end-to-end blockchain app for teaching:
+
+1. **A factory contract.** Anyone can pay a small creation fee to have the factory deploy a new token contract for them. The caller becomes the owner of that token. The factory keeps a record of every token it created, and its own owner can collect the fees.
+2. **Token contracts with a bonding curve.** Each token is a standard ERC20. New tokens are minted at a price set by a **bonding curve**: a formula that gives the price of the next token based on how many already exist. For example, a flat curve charges the same price forever, and a linear curve makes each token a little more expensive than the last. The token's owner can mint, and other people can mint by paying the price the curve sets. The ETH they pay goes to the token's owner.
+3. **A web interface** that makes all of this usable from a browser wallet: create tokens, browse them, see price quotes, mint, and withdraw.
+4. **An upgradeable variant** (added last). Creators can pay extra for a token that sits behind a proxy, so its owner can later change the curve or upgrade the code. Keeping both kinds side by side shows exactly what upgradeability adds, and what it costs in trust.
+
+Along the way the project should model good practice: clear access control, input validation, readable errors, events, thorough tests, and documentation that explains *why*.
+
+**Non-goals:** production deployment, selling tokens back to the curve, price oracles, and event indexing. Some of these are listed under [Suggested Next Phases](#suggested-next-phases).
+
+## Conventions
+
+These few things are fixed so the checkpoints, the README, and the docs stay consistent. Everything else is up to the agent.
+
+- **Contracts:** a Foundry project with `src/`, `test/`, and `script/`, using [OpenZeppelin Contracts](https://www.openzeppelin.com/solidity-contracts) v5.7.0.
+- **Frontend:** in `web/`, built with React, TypeScript, Vite, and viem.
+- **npm scripts:** `dev` (run the frontend), `build:web` (type-check and build it), `deploy:local` (deploy the factory to Anvil), `fund:local` (send test ETH to a wallet).
+- **Local chain:** Anvil at `http://127.0.0.1:8545`, chain ID `31337`.
+
+## How to Use This Playbook
 
 Each phase has:
 
-- **Prompt**: a cleaned-up version of the request used during development. Give it to a coding agent as written, or treat it as a spec if you are building by hand.
-- **What you should end up with**: the files and behavior the phase produces.
+- **Prompt**: paste it into a coding agent as written, or treat it as a spec if you are building by hand.
+- **What you should end up with**: the behavior to check for. Names and code will differ between runs.
 - **Checkpoint**: commands to run before moving on.
-- **Lessons learned**: problems hit during the original build, folded back in so you can skip them.
+- **Lessons learned**: problems hit during the original build. Every prompt asks the agent to read these first.
 
-## How to Use This Playbook With Claude
+To build with Claude Code:
 
 1. Create an empty git repo that contains only this file at `docs/PLAYBOOK.md`.
 2. Install the [prerequisites](#prerequisites).
 3. Open Claude Code in the repo root.
-4. Paste each phase's **Prompt** block in order. Wait for the phase to finish, run its **Checkpoint**, then commit and tag before pasting the next prompt:
+4. Paste each phase's **Prompt** in order. Wait for the phase to finish, run its **Checkpoint**, then commit and tag before pasting the next prompt:
 
    ```shell
    git add -A && git commit -m "Phase 1: factory and fixed token" && git tag phase-1
    ```
 
-Each prompt already includes the fixes from that phase's lessons learned. The lessons are listed separately so you understand *why* the prompt asks for those things. Exact code will differ from the original repo; behavior, tests, and UI should match.
+The order is deliberate. Tokens start out **non-upgradeable**, and upgradeability arrives only in Phase 6. The tags make the history a teaching aid: for example, `git diff phase-5 phase-6` shows exactly what upgradeability adds.
 
-The order is deliberate. The tokens start out **non-upgradeable**, and upgradeability is added only in Phase 6. That way you can compare a fixed contract with a proxy-based one side by side and see exactly what the proxy pattern changes.
-
-For the reasoning behind the contracts, see [DESIGN.md](DESIGN.md).
+For the reasoning behind the contracts, see `docs/DESIGN.md` (written in Phase 3).
 
 ## Prerequisites
 
@@ -44,56 +66,48 @@ forge --version
 anvil --version
 ```
 
-Tip: commit and tag the end of every phase (`git tag phase-1`, and so on). The git history then becomes a teaching aid; for example, `git diff phase-5 phase-6` shows exactly what upgradeability adds.
-
 ---
 
-## Phase 1: Factory and Fixed ERC20 Token
+## Phase 1: Factory and Fixed Token
 
 **Prompt**
 
 ```text
-Initialize a Foundry project in this repo (keep docs/PLAYBOOK.md) and install
-OpenZeppelin Contracts pinned to v5.7.0. Set offline = true in foundry.toml.
-Build:
+Read the Project Goals, Conventions, and Phase 1 Lessons learned in
+docs/PLAYBOOK.md before starting.
 
-1. CurveToken: an ERC20 + Ownable token. The constructor takes name, symbol,
-   owner, initial supply, and a BondingCurveConfig struct
-   {curveType, basePrice, slope, reserveRatioBps, maxSupply}. Mint the initial
-   supply to the owner. The owner can mint more; holders can burn their own
-   tokens. Enforce maxSupply when it is non-zero, and reject reserveRatioBps
-   above 10000. Add quoteMintCost(amount): curveType 0 is a flat price; any
-   other value is linear (arithmetic-series sum from the current supply).
+Set up the Foundry project in this repo (keep docs/PLAYBOOK.md) and build the
+first version of the two contracts:
 
-2. CurveTokenFactory: users call createToken(...) and pay at least creationFee.
-   The factory deploys a CurveToken owned by the caller and records every
-   token address and its creator. The factory owner can change the fee,
-   add or remove fee withdrawers, and transfer ownership. The owner or an
-   authorized withdrawer can withdraw collected fees.
+1. A token contract: a standard ERC20 with an owner. Its creator chooses the
+   name, symbol, an initial supply (minted to the owner), an optional maximum
+   supply, and a bonding curve. Support at least two curve shapes: a flat
+   price and a linear curve where each new token costs a little more than the
+   last. The token should be able to quote the ETH cost of minting a given
+   amount from its current supply. For now, only the owner can mint (within
+   the cap), and holders can burn their own tokens. The curve is fixed once
+   the token is deployed.
 
-Use custom errors and emit events for every state change. Add a deploy script
-(fee and owner configurable by env var) and Foundry tests covering the
-happy paths and the access-control and fee failures. Make sure forge test passes.
+2. A factory contract: anyone can pay a creation fee to deploy a new token
+   that they own. The factory records every token it created and who created
+   it. The factory owner can change the fee and decide which addresses may
+   withdraw the collected fees.
+
+Validate inputs, use descriptive custom errors, and emit events for state
+changes. Add a Foundry deploy script with a configurable fee and owner, and
+tests covering the happy paths, access control, fee handling, the supply cap,
+and curve quotes. Make sure forge test passes.
 ```
 
 **What you should end up with**
 
-- `src/CurveToken.sol`, `src/CurveTokenFactory.sol`
-- `script/DeployCurveTokenFactory.s.sol`
-- `test/CurveTokenFactory.t.sol`, testing that:
-  - token creation collects the fee and gives ownership to the caller
-  - token history is stored
-  - an underpaid creation reverts with `FeeTooLow`
-  - fee-withdrawer authorization works, and unauthorized addresses can't withdraw
-  - owner minting works within the cap and reverts above it
-  - `quoteMintCost` matches the configured curve
-
-Setup commands:
-
-```shell
-forge init --force --no-git
-forge install OpenZeppelin/openzeppelin-contracts@v5.7.0
-```
+- A token contract, a factory contract, a deploy script, and passing tests showing that:
+  - creating a token collects the fee and makes the caller its owner
+  - the factory remembers every token and its creator
+  - underpaying the fee reverts with a clear error
+  - only authorized addresses can withdraw fees
+  - owner minting works up to the cap and reverts beyond it
+  - cost quotes match the curve's formula for both curve shapes
 
 **Checkpoint**
 
@@ -104,7 +118,8 @@ forge test
 
 **Lessons learned**
 
-- Set `offline = true` in `foundry.toml`. On this macOS machine, Foundry crashed during `forge test` while trying a remote selector lookup.
+- Set `offline = true` in `foundry.toml`. On the original macOS machine, Foundry crashed during `forge test` while trying to look up function selectors online.
+- Install OpenZeppelin with `forge install OpenZeppelin/openzeppelin-contracts@v5.7.0`.
 
 ---
 
@@ -113,40 +128,32 @@ forge test
 **Prompt**
 
 ```text
-Install viem, React, Vite, TypeScript, and lucide-react, and build a
-lightweight single-page frontend in web/src for the factory. It should:
+Read the Project Goals, Conventions, and Phase 2 Lessons learned in
+docs/PLAYBOOK.md before starting.
 
-- Take a factory address and RPC URL (default http://127.0.0.1:8545),
-  remembering both in localStorage.
-- Connect to an injected wallet (MetaMask).
-- Show factory metrics: owner, fee, factory ETH balance, token count.
-- List every minted token as a card: name, symbol, address, supply, cap,
-  creator, owner, curve type, reserve bps.
-- Offer a form (name, symbol, initial supply, max supply, curve type,
-  reserve bps, base price, slope) that calls createToken with the fee.
-- Show a status bar for pending, success, and error states.
+Build a lightweight single-page frontend for the factory. A user should be
+able to:
 
-Keep the contract ABIs in web/src/abi.ts as typed `as const` excerpts.
-Also add npm scripts that use viem against Anvil's unlocked accounts:
-deploy:local (reads the factory artifact from out/, deploys it, and prints
-its address, owner, and fee) and fund:local (sends test ETH to a given
-wallet). Use viem for deployment rather than forge script. Make sure
-npm run build:web passes.
+- point the app at a factory address and RPC URL (defaulting to local
+  Anvil), and have the app remember both between visits
+- connect a browser wallet such as MetaMask
+- see the factory's key facts: owner, creation fee, ETH balance, and number
+  of tokens created
+- browse every token the factory created, with its key details, including
+  its supply, cap, owner, and curve settings
+- create a new token from a form, paying the creation fee
+- see whether each transaction is pending, succeeded, or failed
+
+Also add the deploy:local and fund:local npm scripts for working with Anvil:
+deploy:local deploys the factory from Anvil's unlocked default account and
+prints what the user needs next (address, owner, fee), and fund:local sends
+test ETH to a given wallet. Make sure npm run build:web passes.
 ```
 
 **What you should end up with**
 
-- `index.html`, `vite.config.ts`, `tsconfig.json`
-- `web/src/main.tsx`, `web/src/abi.ts`, `web/src/styles.css`, `web/src/vite-env.d.ts`
-- `web/scripts/deploy-local.mjs`, `web/scripts/fund-local.mjs`
-- `package.json` scripts: `dev`, `build:web`, `deploy:local`, `fund:local`
-
-Install command:
-
-```shell
-npm init -y
-npm install viem react react-dom lucide-react vite typescript @vitejs/plugin-react @types/react @types/react-dom
-```
+- A frontend in `web/` and the four npm scripts from [Conventions](#conventions).
+- From a fresh Anvil chain you can deploy the factory, open the app, connect MetaMask, create a token, and see it listed.
 
 **Checkpoint**
 
@@ -161,8 +168,8 @@ Paste the printed factory address into the app and create a token. See [Running 
 
 **Lessons learned**
 
-- `forge script` crashed with a Foundry internal error while talking to Anvil in this environment. The viem deploy helper avoids it, and since Anvil's accounts are unlocked it needs no private key.
-- The ABI in `web/src/abi.ts` is a hand-copied excerpt of the compiled ABI. Whenever a contract function changes, update it too.
+- `forge script` crashed with a Foundry internal error while talking to Anvil in the original environment. Write `deploy:local` with viem instead: it reads the compiled factory from `out/` and, since Anvil's accounts are unlocked, needs no private key.
+- The frontend needs the contracts' ABIs. If they are copied by hand, they go stale whenever a contract changes. Either keep them in one place and update them every phase, or generate them from `out/`.
 
 ---
 
@@ -171,75 +178,88 @@ Paste the printed factory address into the app and create a token. See [Running 
 **Prompt**
 
 ```text
-Add docs/DESIGN.md explaining the factory, token, bonding-curve math,
-fee flow, and frontend for both humans and agents. Be explicit about what
-the bonding curve does not do yet. Update the README with usage, deploy, and
-frontend instructions, and link docs/DESIGN.md and docs/PLAYBOOK.md.
-Do not rewrite docs/PLAYBOOK.md.
+Read the Project Goals in docs/PLAYBOOK.md.
+
+Add docs/DESIGN.md, written for both humans and coding agents. Explain the
+factory, the token, the bonding-curve math, how fees flow, and how the
+frontend talks to the contracts. Be explicit about what the bonding curve
+does not do yet. Update the README with usage, deploy, and frontend
+instructions, and link docs/DESIGN.md and docs/PLAYBOOK.md. Do not rewrite
+docs/PLAYBOOK.md.
 ```
 
 **What you should end up with**
 
-- `docs/DESIGN.md` and an updated README. (In the original build, this phase also wrote the playbook you are reading.)
+- `docs/DESIGN.md` and an updated README. A newcomer can understand the curve math and run the demo from these alone.
 
 ---
 
-## Phase 4: Clear Errors on Token Creation
+## Phase 4: Clear Errors
 
 **Prompt**
 
 ```text
-Token creation sometimes fails in the UI with an unhelpful message. Before
-sending a transaction, simulate it with publicClient.simulateContract so
-reverts are caught before the wallet prompt. Check client-side that max supply
-is at least initial supply. After sending, check receipt.status and report
-reverted transactions. Add the contracts' custom error definitions to
-web/src/abi.ts, and make the UI's error helper append the decoded error name
-(from viem's ContractFunctionRevertedError) so users see e.g. "FeeTooLow"
-instead of a raw selector. In DESIGN.md, add a "General Smart Contract
-Principles" section covering checks-effects-interactions, pull vs. push
-payments, role-based access control, the factory pattern, and transient
-storage.
+Read the Phase 4 Lessons learned in docs/PLAYBOOK.md before starting.
+
+When a transaction fails in the UI, the message is often unhelpful. Make
+failures explain themselves:
+
+- Catch reverts before the wallet prompt where possible, so users aren't
+  asked to sign a transaction that will fail.
+- Validate obvious input mistakes in the browser (for example, a cap below
+  the initial supply).
+- Detect transactions that were mined but reverted.
+- Show the contract's custom error by name instead of a raw hex selector.
+
+Use one consistent pattern for every transaction the app sends, so later
+features get good errors for free.
+
+In DESIGN.md, add a "General Smart Contract Principles" section covering
+checks-effects-interactions, pull vs. push payments, role-based access
+control, the factory pattern, and transient storage.
 ```
 
 **What you should end up with**
 
-- Every write follows the same three steps: **simulate → write → wait for the receipt and check its status**. Later phases reuse this pattern.
+- Underpaying the fee shows something like `FeeTooLow` before MetaMask even opens.
 - A principles section in `DESIGN.md`.
 
 **Lessons learned**
 
-- Without the error entries in `abi.ts` and the decoding in the helper, users see "reverted with the following signature: 0x…" instead of `FeeTooLow` or `OwnableUnauthorizedAccount`. In the original build this was only fixed in Phase 6.
+- viem's `simulateContract` runs a transaction without sending it, which catches reverts before the wallet prompt. After sending, check the receipt's `status`.
+- viem can only decode a custom error if that error is in the ABI the frontend uses. Without it, users see "reverted with the following signature: 0x…". In the original build this was only fixed in Phase 6.
 
 ---
 
-## Phase 5: Paid Minting From the Curve and a Fee-Withdraw UI
+## Phase 5: Minting From the Curve
 
 **Prompt**
 
 ```text
+Read the Project Goals and Phase 5 Lessons learned in docs/PLAYBOOK.md
+before starting.
+
 Make the bonding curve usable, not just quotable:
 
-- Add CurveToken.mintFromCurve(amount): anyone can call it, paying exactly
-  quoteMintCost(amount) in ETH (revert IncorrectPayment otherwise), and it
-  mints within the cap. Keep the ETH in the token contract.
-- Add an owner-only withdrawProceeds(to) for that ETH.
-- In the UI, give each token card a "Mint Amount" input with a live cost
-  quote, a Mint Tokens button, and the token's ETH proceeds and the connected
-  wallet's balance.
-- Add an "Owner Balance" metric and a Fee Admin band with a Withdraw Fees
-  button that withdraws factory fees to the connected wallet.
-- Add tests for exact-payment minting, wrong-payment reverts, and
-  proceeds withdrawal. In tests, compute the quote before vm.prank, since a
-  nested call would use up the prank. Update DESIGN.md and the README: the
-  curve now supports paid minting but is still not a full buy/sell market
-  maker.
+- Anyone can mint tokens by paying exactly the curve's price in ETH, within
+  the supply cap.
+- The token's owner can withdraw the ETH collected from those sales. Choose
+  where that ETH is held and explain the choice in DESIGN.md.
+- In the UI, a user can enter an amount on any token, see a live price quote,
+  and mint. Show how much ETH each token has collected and the connected
+  wallet's balance of it. The factory owner (or an authorized withdrawer)
+  can withdraw creation fees from the UI.
+- Add tests for correct payment, incorrect payment, and withdrawing the
+  proceeds.
+
+Update DESIGN.md and the README: tokens can now be bought from the curve,
+but there is still no way to sell them back.
 ```
 
 **What you should end up with**
 
 - A second wallet can buy tokens from the curve, and the creator can withdraw the proceeds.
-- `CurveToken` is still a fixed contract: its curve can never change after deployment.
+- Tokens are still fixed contracts: a curve can never change after deployment.
 
 **Checkpoint**
 
@@ -250,6 +270,10 @@ npm run build:web
 
 **Commit here.** This is the non-upgradeable baseline that Phase 6 is compared against.
 
+**Lessons learned**
+
+- A Foundry gotcha: `vm.prank` applies to the very next call, including one nested inside the arguments. In `vm.prank(buyer); token.mint{value: token.quote(3)}(3);`, the `quote` call uses up the prank, so the mint runs as the test contract. Compute the price on its own line first.
+
 ---
 
 ## Phase 6: Upgradeable Tokens With UUPS Proxies
@@ -257,78 +281,66 @@ npm run build:web
 **Prompt**
 
 ```text
-Illustrate upgradeable proxy contracts. Keep the fixed CurveToken as the
-default, and let users pay an extra fee to mint an upgradeable token instead,
-using the UUPS (Universal Upgradeable Proxy Standard) pattern:
+Read the Project Goals and Phase 6 Lessons learned in docs/PLAYBOOK.md
+before starting.
 
-- Install openzeppelin-contracts-upgradeable at the same version as
-  openzeppelin-contracts (v5.7.0). In v5.7, Initializable and
-  UUPSUpgradeable come from the core package (@openzeppelin/contracts/proxy/utils);
-  take only ERC20Upgradeable and OwnableUpgradeable from the upgradeable one.
-- Add CurveTokenUpgradeable: the same behavior as CurveToken, but
-  initializer-based (ERC20Upgradeable, OwnableUpgradeable, UUPSUpgradeable).
-  Its constructor must call _disableInitializers(). Only the token owner may
-  upgrade (_authorizeUpgrade) or call updateBondingCurve(config), which
-  rejects reserve > 10000 bps and a cap below current supply. Add a version()
-  function. Use a storage variable for the factory address (no immutables
-  behind a proxy).
-- Factory: add upgradeabilityFee (as a constructor argument), deploy one
-  shared implementation in the constructor, and add
-  createUpgradeableToken(...), which requires creationFee + upgradeabilityFee
-  and deploys an ERC1967Proxy that is initialized in the same transaction.
-  Track isUpgradeable[token]. The owner can change the fee and the
-  implementation used by future tokens; existing tokens can only be upgraded
-  by their own owner.
-- Tests: proxy initialization, the extra fee, owner-only modify and upgrade,
-  the factory owner cannot upgrade user tokens, re-initialization blocked on
-  the proxy and the implementation, and an upgrade to a V2 mock that keeps
-  balances, ETH, and settings. Update the existing tests for the new
-  factory constructor. Make sure forge test passes and check sizes with
-  forge build --sizes.
-- Frontend: an "Upgradeable (UUPS proxy)" checkbox that shows the total cost
-  on the Create button. Each token card shows Contract (Fixed / UUPS Proxy)
-  and Logic (version + implementation address, read from the ERC-1967
-  storage slot). Add a Modify button that is enabled only for upgradeable
-  tokens owned by the connected wallet (greyed out with an explanatory
-  tooltip otherwise). It opens an inline editor for the curve parameters
-  and calls updateBondingCurve. Share one curve-fields component between
-  the create form and the editor. Add an "Upgrade Fee" metric. Update
-  deploy-local and the deploy script for the new constructor argument
-  (UPGRADEABILITY_FEE_ETH / UPGRADEABILITY_FEE, default 0.005 ETH).
-- Docs: explain proxies, delegatecall, the ERC-1967 slot, UUPS, and the
-  storage-layout rules in DESIGN.md, plus the trust trade-off of upgradeable
-  tokens. Update the README. Do not rewrite docs/PLAYBOOK.md.
+Illustrate upgradeable proxy contracts. Keep the fixed token as the default,
+and let creators pay an extra fee to get an upgradeable token instead, using
+OpenZeppelin's UUPS (Universal Upgradeable Proxy Standard) pattern.
+
+Contracts:
+- An upgradeable token behaves like a fixed one, plus its owner can change
+  the curve settings and upgrade the token's code. Only the token's owner can
+  do either; the factory owner must not be able to touch anyone's token.
+- Curve changes must keep the token consistent (for example, the cap can
+  never drop below the current supply).
+- Follow standard proxy safety: nobody can initialize the implementation
+  contract directly or re-initialize a proxy, and each proxy is deployed and
+  initialized in a single transaction.
+- All upgradeable tokens share one implementation contract. The factory
+  owner can change the implementation used for future tokens, but not for
+  existing ones.
+- Tests: initialization, the extra fee, access control on curve changes and
+  upgrades, blocked re-initialization, and an upgrade to a mock V2 that keeps
+  balances, ETH, and settings. Make sure forge test passes and check contract
+  sizes with forge build --sizes.
+
+Frontend:
+- When creating a token, the user chooses fixed or upgradeable and sees the
+  total cost.
+- Each token shows whether it is fixed or a proxy, and for proxies the code
+  version and implementation address.
+- The owner of an upgradeable token can edit its curve in the UI. For anyone
+  else, and for fixed tokens, the option is visibly disabled with an
+  explanation.
+- Update the deploy scripts for the new fee.
+
+Docs: in DESIGN.md, explain proxies, delegatecall, ERC-1967 storage slots,
+UUPS, storage-layout rules, and the trust trade-off of upgradeable tokens.
+Update the README. Do not rewrite docs/PLAYBOOK.md.
 ```
 
 **What you should end up with**
 
-- `src/CurveTokenUpgradeable.sol` and `test/CurveTokenUpgradeable.t.sol`
-- The factory constructor is now `(creationFee, initialOwner, upgradeabilityFee)`. The deploy scripts accept `UPGRADEABILITY_FEE` / `UPGRADEABILITY_FEE_ETH` (default 0.005 ETH).
-- In the UI, fixed and proxy tokens appear side by side; only the proxy's owner can modify its curve.
-
-Install command:
-
-```shell
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.7.0
-```
+- Fixed and upgradeable tokens appear side by side in the UI. Only a proxy token's owner can change its curve.
+- A test that upgrades a token to a V2 and shows all state survived.
 
 **Checkpoint**
 
 ```shell
 forge test
 npm run build:web
-npm run deploy:local   # redeploy: the constructor changed
+npm run deploy:local   # redeploy: the factory changed
 ```
 
-Then go through [Demo Flow](#demo-flow), steps 9 to 13.
+Then go through the [Demo Flow](#demo-flow), steps 8 to 13.
 
 **Lessons learned**
 
-- In OpenZeppelin v5.7, `Initializable` and `UUPSUpgradeable` come from the core package (`@openzeppelin/contracts/proxy/utils/...`). The upgradeable package only re-exports them. Use the upgradeable package just for `ERC20Upgradeable` and `OwnableUpgradeable`.
-- Keep the two OpenZeppelin packages on the **same version**. The upgradeable package compiles against the core one through the `@openzeppelin/contracts/` remapping.
-- An implementation behind a proxy can't use `immutable` per-token values (those live in code, not storage), so `FACTORY` becomes a storage variable `factory`.
-- A Foundry gotcha: `vm.prank(buyer); token.mintFromCurve{value: token.quoteMintCost(3)}(3);` mints as the test contract, not the buyer, because the nested `quoteMintCost` call uses up the prank. Compute the cost on its own line first.
-- Deploying the implementation inside the factory constructor keeps deployment to one step and is well within contract size limits. Check with `forge build --sizes`.
+- Install the upgradeable package at the **same version** as the core one: `forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.7.0`. It compiles against the core package through the `@openzeppelin/contracts/` remapping.
+- In OpenZeppelin v5.7, `Initializable` and `UUPSUpgradeable` come from the core package (`@openzeppelin/contracts/proxy/utils/...`). The upgradeable package only re-exports them. Use the upgradeable package just for the upgradeable ERC20 and Ownable contracts.
+- A contract behind a proxy can't keep per-token values in `immutable` variables, because those live in the implementation's code, which every proxy shares. Use storage instead.
+- Deploying the shared implementation inside the factory's constructor keeps deployment to one step and stays well within contract size limits.
 
 ---
 
@@ -352,32 +364,11 @@ This is a public development key. Never use it outside local testing. Restarting
 ### Deploying the Factory
 
 ```shell
-forge build            # deploy-local reads the compiled contract from out/
+forge build            # deploy:local reads the compiled contract from out/
 npm run deploy:local
 ```
 
-Optional environment variables:
-
-```shell
-RPC_URL=http://127.0.0.1:8545
-DEPLOYER=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-CREATION_FEE_ETH=0.01
-UPGRADEABILITY_FEE_ETH=0.005
-```
-
-The script prints the factory address, the owner, both fees, and the deployer's balance. The deployer becomes the factory owner. The factory address depends on how many transactions the deployer has already sent, so always copy it from the output.
-
-The Foundry script also works on networks where `forge script` behaves:
-
-```shell
-CREATION_FEE=10000000000000000 \
-UPGRADEABILITY_FEE=5000000000000000 \
-INITIAL_OWNER=0xYourOwnerAddress \
-forge script script/DeployCurveTokenFactory.s.sol:DeployCurveTokenFactory \
-  --rpc-url http://127.0.0.1:8545 \
-  --private-key <private_key> \
-  --broadcast
-```
+The script prints the factory address and fees. The deployer becomes the factory owner. The factory address depends on how many transactions the deployer has already sent, so always copy it from the output. The README lists the environment variables for changing the RPC URL, deployer, and fees.
 
 ### MetaMask
 
@@ -393,30 +384,24 @@ Block explorer:  (leave blank)
 
 MetaMask may suggest a different currency symbol for chain `31337`. Use `ETH`.
 
-Import the Anvil key above, or fund an existing wallet:
-
-```shell
-TO=0xYourWalletAddress AMOUNT_ETH=10 npm run fund:local
-```
-
-(`FROM` and `RPC_URL` can also be overridden.)
+Import the Anvil key above, or send test ETH to an existing wallet with `npm run fund:local` (see the README for its options).
 
 ### Demo Flow
 
 1. Start Anvil and run `npm run deploy:local`.
-2. Run `npm run dev` and open `http://127.0.0.1:5173/`.
-3. Select the Anvil Local network in MetaMask and click **Connect**.
-4. Paste the factory address and click **Refresh**.
-5. Create a **fixed** token: fill in the form, leave "Upgradeable" unticked, and click **Create Token**.
-6. From a second wallet, buy tokens with **Mint Tokens** on the card.
-7. Back on the creator wallet, notice the proceeds on the card. Use **Withdraw Fees** as the factory owner.
-8. Note that **Modify** is greyed out on the fixed token: its curve can never change.
-9. Tick **Upgradeable (UUPS proxy)** and create a second token. The button shows the combined fee.
-10. Compare the two cards. The proxy shows `Contract: UUPS Proxy` and `Logic: v1 @ 0x…`. Every upgradeable token shares the same implementation address.
-11. Click **Modify** on the proxy token, change the base price or curve type, and **Save**.
-12. Check that the cost quote changed while the token's address stayed the same.
-13. Switch to a wallet that doesn't own the token. Modify is disabled, and calling it directly reverts with `OwnableUnauthorizedAccount`.
-14. Walk through `testOwnerCanUpgradeAndStateIsPreserved` in `test/CurveTokenUpgradeable.t.sol` to show a full logic upgrade that keeps all state.
+2. Run `npm run dev` and open the URL it prints.
+3. Select the Anvil Local network in MetaMask and connect.
+4. Paste the factory address into the app.
+5. Create a **fixed** token.
+6. From a second wallet, mint some of it from the curve, and watch the price quote.
+7. Back on the creator wallet, withdraw the token's proceeds. As the factory owner, withdraw the creation fees.
+8. Notice that the curve can't be edited on the fixed token.
+9. Create an **upgradeable** token. The total cost includes the extra fee.
+10. Compare the two tokens. The proxy shows its code version and implementation address, and every upgradeable token shares the same implementation.
+11. Edit the proxy token's curve, for example its base price.
+12. Check that the price quote changed while the token's address stayed the same.
+13. Switch to a wallet that doesn't own the token. Editing is disabled, and calling the contract directly reverts with an ownership error.
+14. Walk through the V2 upgrade test to see a full code upgrade that keeps all state.
 
 ## Verification Before Handing Off
 
@@ -433,11 +418,11 @@ Expected:
 
 ## Suggested Next Phases
 
-- A "deploy V2 and upgrade" flow in the UI, so `upgradeToAndCall` can be demoed in the browser.
+- A "deploy V2 and upgrade" flow in the UI, so a code upgrade can be demoed in the browser.
 - Put upgrade rights behind a timelock or multisig to show how production systems limit owner power.
-- A real buy/sell reserve around the bonding curve, using `reserveRatioBps`.
+- A sell-back mechanism: keep a reserve of the ETH paid in, so holders can sell tokens back along the curve.
 - EIP-1167 minimal clones as a cheaper, non-upgradeable alternative to compare against UUPS.
 - `CREATE2` for deterministic token addresses.
 - Generate the frontend ABIs from Foundry artifacts instead of copying them by hand.
-- Event-based indexing instead of looping over `tokenAt`.
+- Event-based indexing instead of reading every token one by one.
 - A helper in the frontend for switching wallet networks.
